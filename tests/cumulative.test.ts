@@ -151,4 +151,40 @@ describe("human cumulative scanner capture", () => {
     expect(afterSecondShake.centreFound).toBe(9);
     expect(afterSecondShake.ringFound).toBe(12);
   });
+
+  test("continued agreement after frame eight can overturn an early wrong consensus", () => {
+    const series = new VisualCaptureSeries();
+    const codeword = starParityCodeword(sample);
+    const selected = new Set(spread(seedSlotCount));
+    let at = 0;
+    let snapshot: VisualCaptureSnapshot | undefined;
+
+    for (let frame = 0; frame < 8; frame += 1) {
+      snapshot = series.add({
+        at,
+        stars: conflictingObservations(codeword, selected, 0x55, 0.98),
+        quality: 0.94,
+        centre: mask(9, [0, 1, 2, 3, 4, 5, 6, 7, 8]),
+        ring: mask(12, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11])
+      });
+      at += 100;
+    }
+
+    expect(snapshot?.reading).toBe(undefined);
+
+    for (let frame = 0; frame < 40; frame += 1) {
+      snapshot = series.add({
+        at,
+        stars: observations(codeword, selected, 0.78),
+        quality: 0.82,
+        centre: mask(9, [0, 1, 2, 3, 4, 5, 6, 7, 8]),
+        ring: mask(12, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11])
+      });
+      at += 100;
+    }
+
+    expect(snapshot?.frames).toBe(48);
+    expect(snapshot?.observedStars).toBe(seedSlotCount);
+    expect(snapshot?.reading?.value).toEqual(sample);
+  });
 });

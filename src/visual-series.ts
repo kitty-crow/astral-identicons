@@ -28,8 +28,8 @@ export interface VisualCaptureSnapshot {
 }
 
 interface ComponentEvidence {
-  readonly peaks: Float32Array;
-  readonly support: Uint8Array;
+  readonly scores: Float64Array;
+  readonly support: Uint32Array;
 }
 
 interface SlotEvidence {
@@ -47,8 +47,8 @@ type Components = Omit<StarComponentObservation, "value" | "confidence">;
 
 function componentEvidence(values: number): ComponentEvidence {
   return {
-    peaks: new Float32Array(values),
-    support: new Uint8Array(values)
+    scores: new Float64Array(values),
+    support: new Uint32Array(values)
   };
 }
 
@@ -60,34 +60,40 @@ function slotEvidence(): SlotEvidence {
   };
 }
 
+function clamp(value: number): number {
+  return Math.max(0, Math.min(1, value));
+}
+
 function componentReading(evidence: ComponentEvidence): ComponentReading {
   let bestValue = 0;
   let best = 0;
   let second = 0;
+  let bestSupport = 0;
 
-  for (let value = 0; value < evidence.peaks.length; value += 1) {
-    const peak = evidence.peaks[value] ?? 0;
-    const confirmation = Math.min(0.24, (evidence.support[value] ?? 0) * 0.04);
-    const score = peak + confirmation;
+  for (let value = 0; value < evidence.scores.length; value += 1) {
+    const score = evidence.scores[value] ?? 0;
 
     if (score > best) {
       second = best;
       best = score;
       bestValue = value;
+      bestSupport = evidence.support[value] ?? 0;
       continue;
     }
 
     if (score > second) second = score;
   }
 
-  if (best < 0.2) return { value: null, confidence: 0 };
+  if (best < 0.12 || bestSupport === 0) {
+    return { value: null, confidence: 0 };
+  }
+
+  const margin = (best - second) / Math.max(best, 0.001);
+  const repetition = Math.min(1, bestSupport / 4);
 
   return {
     value: bestValue,
-    confidence: Math.max(
-      0,
-      Math.min(1, (best - second) / Math.max(0.01, best))
-    )
+    confidence: clamp(margin * 0.82 + repetition * 0.18)
   };
 }
 
@@ -161,7 +167,7 @@ export class VisualCaptureSeries {
         evidence.size,
         evidence.opacity
       ]) {
-        component.peaks.fill(0);
+        component.scores.fill(0);
         component.support.fill(0);
       }
     }
@@ -237,14 +243,11 @@ export class VisualCaptureSeries {
   ): void {
     if (value === null) return;
 
-    const score = weight * (0.08 + confidence * 0.92);
-    const current = evidence.peaks[value] ?? 0;
-    const support = evidence.support[value] ?? 0;
+    const certainty = Math.max(0, Math.min(1, confidence));
+    const score = weight * (0.02 + certainty * certainty * 0.98);
 
-    evidence.peaks[value] = Math.max(current, score);
-    if (score >= 0.18 && support < 8) {
-      evidence.support[value] = support + 1;
-    }
+    evidence.scores[value] = (evidence.scores[value] ?? 0) + score;
+    evidence.support[value] = (evidence.support[value] ?? 0) + 1;
   }
 
   private addEvidence(
