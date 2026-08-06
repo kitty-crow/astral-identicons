@@ -4,7 +4,11 @@ import {
 } from "./planet-code.ts";
 import {
   recoverV9Record,
+  v9DataByteCount,
+  v9IdentityByteCount,
   v9Record,
+  v9RecordMagic,
+  v9RecordVersion,
   type V9ByteObservation
 } from "./record-v9.ts";
 import { base64Url, bindPublicKey } from "./seed-value.ts";
@@ -55,6 +59,11 @@ interface SignBeam {
 }
 
 const emptySigns = {} as Record<V9SignRole, Sign>;
+const knownHeader: readonly V9ByteObservation[] = [
+  { value: v9RecordMagic, confidence: 1 },
+  { value: v9RecordVersion, confidence: 1 },
+  { value: v9IdentityByteCount, confidence: 1 }
+] as const;
 
 function boundedInteger(
   value: number | undefined,
@@ -145,6 +154,12 @@ function observationRecord(
   }));
 }
 
+function parityOnlyRecord(): readonly V9ByteObservation[] {
+  return Array.from({ length: v9DataByteCount }, (_unused, index) => {
+    return knownHeader[index] ?? { value: null, confidence: 0 };
+  });
+}
+
 function key(value: IdenticonInput): string {
   return [
     value.seed,
@@ -165,6 +180,27 @@ function score(
   const primary = Math.max(primaryConfidence, 1e-12);
   const parity = Math.max(parityConfidence, 1e-12);
   return Math.sqrt(primary * parity) / (1 + errors * 0.25);
+}
+
+function parityOnlyCandidate(
+  parity: readonly V9ByteObservation[]
+): V9DecodedCandidate | undefined {
+  try {
+    const recovered = recoverV9Record({
+      data: parityOnlyRecord(),
+      parity
+    });
+    return {
+      value: recovered.value,
+      score: score(1, recovered.confidence, recovered.errors),
+      primaryConfidence: 1,
+      parityConfidence: recovered.confidence,
+      correctedErrors: recovered.errors,
+      erasedBytes: recovered.erasures
+    };
+  } catch {
+    return undefined;
+  }
 }
 
 export function decodeV9Candidates(
@@ -209,6 +245,10 @@ export function decodeV9Candidates(
     "alternatives per sign"
   );
 
+  const decoded = new Map<string, V9DecodedCandidate>();
+  const parityOnly = parityOnlyCandidate(parity);
+  if (parityOnly) decoded.set(key(parityOnly.value), parityOnly);
+
   const identities = planetaryIdentityCandidates(
     planets,
     planetCandidateLimit,
@@ -219,7 +259,6 @@ export function decodeV9Candidates(
     signCandidateLimit,
     alternativesPerSign
   );
-  const decoded = new Map<string, V9DecodedCandidate>();
 
   for (const identity of identities) {
     for (const signSet of signSets) {
